@@ -39,11 +39,27 @@ def get_summary(source_id=None):
 
 
 def get_pending(source_id=None):
-    qs = ProductionEvent.objects.filter(status='PENDING_REFERENCE')
+    """
+    Return events that are ready for acknowledgement.
+    
+    Per FSE-01 spec (page 4, section 6.2):
+    - Successfully processed COUNT/VOID events that are not yet acknowledged
+    - Plus PENDING_REFERENCE events (unresolved VOIDs)
+    """
+    from django.db.models import Q
+    
+    qs = ProductionEvent.objects.filter(
+        Q(status='ACCEPTED', acknowledged_at__isnull=True) |
+        Q(status='VOIDED', acknowledged_at__isnull=True) |
+        Q(status='PENDING_REFERENCE')
+    )
     if source_id:
         qs = qs.filter(source_id=source_id)
-    return list(qs.values('event_id', 'source_id', 'type', 'target_event_id', 'event_time', 'status'))
-
+    
+    return list(qs.values(
+        'event_id', 'source_id', 'type', 'target_event_id',
+        'event_time', 'status', 'acknowledged_at'
+    ))
 
 def get_exceptions(source_id=None):
     qs = ProductionEvent.objects.filter(status__in=['REJECTED', 'CONFLICT'])
