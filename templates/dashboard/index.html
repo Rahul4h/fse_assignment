@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSE Production Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+        h1 { color: #38bdf8; margin-bottom: 20px; font-size: 1.8rem; }
+        h2 { color: #94a3b8; font-size: 1.1rem; margin: 20px 0 10px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .card { background: #1e293b; padding: 16px; border-radius: 8px; border-left: 4px solid #38bdf8; }
+        .card .label { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+        .card .value { font-size: 1.8rem; font-weight: bold; color: #f1f5f9; margin-top: 4px; }
+        .card.warn { border-left-color: #f59e0b; }
+        .card.danger { border-left-color: #ef4444; }
+        .card.success { border-left-color: #10b981; }
+        .card.rejected { border-left-color: #f43f5e; }
+        .card.rejected .value { color: #f43f5e; }
+        .panel { background: #1e293b; padding: 16px; border-radius: 8px; margin-bottom: 20px; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+        .tab { padding: 6px 14px; background: #334155; border-radius: 6px; cursor: pointer; font-size: 0.85rem; border: none; color: #e2e8f0; }
+        .tab.active { background: #38bdf8; color: #0f172a; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #334155; }
+        th { color: #94a3b8; font-weight: 500; text-transform: uppercase; font-size: 0.7rem; }
+        tr:hover { background: #334155; }
+        .status { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+        .status.ACCEPTED { background: #10b981; color: white; }
+        .status.PENDING_REFERENCE { background: #f59e0b; color: white; }
+        .status.DUPLICATE { background: #6366f1; color: white; }
+        .status.CONFLICT, .status.REJECTED { background: #ef4444; color: white; }
+        .status.VOIDED { background: #64748b; color: white; }
+        textarea, input, button, select { font-family: inherit; }
+        textarea { width: 100%; height: 120px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 0.85rem; }
+        button.primary { background: #38bdf8; color: #0f172a; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        button.primary:hover { background: #0ea5e9; }
+        button.ack-btn { background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold; }
+        button.ack-btn:hover { background: #059669; }
+        button.ack-all { background: #8b5cf6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: bold; margin-bottom: 10px; }
+        button.ack-all:hover { background: #7c3aed; }
+        .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .status-badge { padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; }
+        .status-badge.online { background: #10b981; color: white; }
+        .status-badge.offline { background: #ef4444; color: white; }
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; border-left: 4px solid #10b981; padding: 12px 20px; border-radius: 6px; color: #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: translateX(400px); transition: transform 0.3s; z-index: 999; }
+        .toast.show { transform: translateX(0); }
+        .toast.error { border-left-color: #ef4444; }
+        .checkbox-cell { width: 30px; text-align: center; }
+        .filter-input { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; }
+        .filter-input:focus { outline: none; border-color: #38bdf8; }
+    </style>
+</head>
+<body>
+    <h1>🏭 FSE Production Dashboard</h1>
+    <div class="row" style="margin-bottom: 20px;">
+        <span>MQTT Status: <span id="mqtt-status" class="status-badge offline">OFFLINE</span></span>
+        <span style="color: #64748b;">|</span>
+        <span>Candidate: <strong>17</strong></span>
+        <span style="color: #64748b;">|</span>
+        <span>Source Filter:</span>
+        <input type="text" id="source-filter" class="filter-input" placeholder="e.g. LINE-01" oninput="onFilterChange()">
+        <button class="tab" onclick="clearFilter()">Clear</button>
+        <button class="tab" onclick="refreshAll()">🔄 Refresh</button>
+    </div>
+
+    <h2>Summary</h2>
+    <div class="grid" id="summary-cards"></div>
+
+    <div class="panel">
+        <div class="tabs">
+            <button class="tab active" data-tab="events" onclick="switchTab('events', this)">Events</button>
+            <button class="tab" data-tab="pending" onclick="switchTab('pending', this)">Pending</button>
+            <button class="tab" data-tab="exceptions" onclick="switchTab('exceptions', this)">Exceptions</button>
+        </div>
+        <div id="tab-content"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Submit Event (JSON)</h2>
+        <textarea id="event-input">{"source_id": "LINE-01", "event_id": "EV-300", "type": "COUNT", "quantity": 5, "event_time": "2026-10-09T10:30:00Z"}</textarea>
+        <button class="primary" onclick="submitEvent()">Submit Event</button>
+        <pre id="submit-result" style="margin-top: 10px; color: #94a3b8; font-size: 0.8rem;"></pre>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const API = window.location.origin;
+        let currentTab = 'events';
+
+        function getFilter() {
+            const v = document.getElementById('source-filter').value.trim();
+            return v ? `&source_id=${encodeURIComponent(v)}` : '';
+        }
+
+        function onFilterChange() {
+            loadSummary();
+            switchTab(currentTab, document.querySelector(`.tab[data-tab="${currentTab}"]`));
+        }
+
+        function clearFilter() {
+            document.getElementById('source-filter').value = '';
+            onFilterChange();
+        }
+
+        async function fetchJSON(url, options) {
+            const res = await fetch(url, options);
+            return res.json();
+        }
+
+        function showToast(msg, isError = false) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast show' + (isError ? ' error' : '');
+            setTimeout(() => t.className = 'toast', 3000);
+        }
+
+        function renderSummary(data) {
+            const cards = [
+                { label: 'Net Total', value: data.net_total, cls: 'success' },
+                { label: 'Processed', value: data.processed_events, cls: '' },
+                { label: 'Pending Ack', value: data.pending_ack, cls: 'warn' },
+                { label: 'Unresolved', value: data.unresolved, cls: 'warn' },
+                { label: 'Duplicates', value: data.duplicates, cls: '' },
+                { label: 'Conflicts', value: data.conflicts, cls: 'danger' },
+                { label: 'Rejected Subs', value: data.rejected_submissions || 0, cls: 'rejected' },
+            ];
+            document.getElementById('summary-cards').innerHTML = cards.map(c =>
+                `<div class="card ${c.cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`
+            ).join('');
+        }
+
+        async function loadSummary() {
+            const data = await fetchJSON(`${API}/api/state?view=summary${getFilter()}`);
+            renderSummary(data);
+        }
+
+        async function loadMqttStatus() {
+            try {
+                const data = await fetchJSON(`${API}/api/mqtt-status`);
+                const el = document.getElementById('mqtt-status');
+                if (data.status === 'ONLINE') {
+                    el.textContent = 'ONLINE';
+                    el.className = 'status-badge online';
+                } else {
+                    el.textContent = 'OFFLINE';
+                    el.className = 'status-badge offline';
+                }
+            } catch (e) {
+                document.getElementById('mqtt-status').textContent = 'OFFLINE';
+                document.getElementById('mqtt-status').className = 'status-badge offline';
+            }
+        }
+
+        async function switchTab(tab, btn) {
+            currentTab = tab;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+
+            let url = '';
+            if (tab === 'events') url = `${API}/api/state?view=summary${getFilter()}`;
+            if (tab === 'pending') url = `${API}/api/state?view=pending${getFilter()}`;
+            if (tab === 'exceptions') url = `${API}/api/state?view=exceptions${getFilter()}`;
+
+            const data = await fetchJSON(url);
+            const container = document.getElementById('tab-content');
+
+            if (tab === 'events') {
+                container.innerHTML = `<pre style="color: #94a3b8;">${JSON.stringify(data, null, 2)}</pre>`;
+            } else if (tab === 'pending') {
+                const rows = data.pending || [];
+                container.innerHTML = rows.length ? `
+                    <button class="ack-all" onclick="ackSelected()">✓ Acknowledge Selected</button>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="checkbox-cell"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+                                <th>Event ID</th>
+                                <th>Source</th>
+                                <th>Type</th>
+                                <th>Target</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(r => `
+                                <tr>
+                                    <td class="checkbox-cell"><input type="checkbox" class="ack-checkbox" value="${r.event_id}"></td>
+                                    <td>${r.event_id}</td>
+                                    <td>${r.source_id}</td>
+                                    <td>${r.type}</td>
+                                    <td>${r.target_event_id || '-'}</td>
+                                    <td><span class="status ${r.status}">${r.status}</span></td>
+                                    <td><button class="ack-btn" onclick="ackEvent('${r.event_id}')">✓ Ack</button></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                ` : '<p style="color: #94a3b8;">No pending events</p>';
+            } else {
+                const rows = data.exceptions || [];
+                container.innerHTML = rows.length ? `
+                    <table>
+                        <thead><tr><th>Event ID</th><th>Source</th><th>Type</th><th>Status</th></tr></thead>
+                        <tbody>
+                            ${rows.map(r => `<tr><td>${r.event_id}</td><td>${r.source_id}</td><td>${r.type}</td><td><span class="status ${r.status}">${r.status}</span></td></tr>`).join('')}
+                        </tbody>
+                    </table>
+                ` : '<p style="color: #94a3b8;">No exceptions</p>';
+            }
+        }
+
+        function toggleSelectAll(el) {
+            document.querySelectorAll('.ack-checkbox').forEach(cb => cb.checked = el.checked);
+        }
+
+        async function ackSelected() {
+            const checked = Array.from(document.querySelectorAll('.ack-checkbox:checked')).map(cb => cb.value);
+            if (checked.length === 0) { showToast('Select at least one event', true); return; }
+            await ackEvents(checked);
+        }
+
+        async function ackEvent(eventId) {
+            await ackEvents([eventId]);
+        }
+
+        async function ackEvents(eventIds) {
+            try {
+                const res = await fetchJSON(`${API}/api/ack`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_ids: eventIds })
+                });
+                let acked = 0, already = 0, notFound = 0;
+                res.results.forEach(r => {
+                    if (r.status === 'ACKED') acked++;
+                    else if (r.status === 'ALREADY_ACKED') already++;
+                    else if (r.status === 'NOT_FOUND') notFound++;
+                });
+                showToast(`✅ ${acked} acked, ${already} already, ${notFound} not found`);
+                loadSummary();
+                switchTab(currentTab, document.querySelector(`.tab[data-tab="${currentTab}"]`));
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
+        async function submitEvent() {
+            const input = document.getElementById('event-input').value;
+            try {
+                const payload = JSON.parse(input);
+                const res = await fetchJSON(`${API}/api/events`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                document.getElementById('submit-result').textContent = JSON.stringify(res, null, 2);
+                loadSummary();
+                if (currentTab !== 'events') {
+                    switchTab(currentTab, document.querySelector(`.tab[data-tab="${currentTab}"]`));
+                }
+            } catch (e) {
+                document.getElementById('submit-result').textContent = 'Error: ' + e.message;
+            }
+        }
+
+        function refreshAll() {
+            loadSummary();
+            loadMqttStatus();
+            switchTab(currentTab, document.querySelector(`.tab[data-tab="${currentTab}"]`));
+        }
+
+        setInterval(loadSummary, 5000);
+        setInterval(loadMqttStatus, 3000);
+
+        loadSummary();
+        loadMqttStatus();
+        switchTab('events', document.querySelector('.tab'));
+    </script>
+</body>
+</html>
