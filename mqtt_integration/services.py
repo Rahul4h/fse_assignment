@@ -3,11 +3,22 @@ import hashlib
 from datetime import datetime
 from django.utils import timezone
 from events.services import process_event
-from events.models import MqttChallenge
+from events.models import MqttChallenge, SystemStatus
 from state.services import get_summary
 
 
 CANDIDATE_ID = "17"
+
+
+def set_mqtt_status(status):
+    """
+    Update MQTT status in SystemStatus table.
+    Called by the MQTT worker to publish ONLINE/OFFLINE.
+    """
+    SystemStatus.objects.update_or_create(
+        key='mqtt_status',
+        defaults={'value': status}
+    )
 
 
 def handle_challenge(payload):
@@ -44,12 +55,13 @@ def handle_challenge(payload):
         "state": {
             "net_total": summary['net_total'],
             "processed_events": summary['processed_events'],
+            "total_ack": summary.get('total_ack', 0),
+            "acked": summary.get('acked', 0),
             "pending_ack": summary['pending_ack'],
             "unresolved": summary['unresolved'],
-            "duplicates": summary['duplicates'],
-            "conflicts": summary['conflicts'],
+            "conflicts": summary.get('conflicts', 0),
             "rejected_submissions": summary.get('rejected_submissions', 0),
-}
+        }
     }
 
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

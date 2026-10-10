@@ -1,10 +1,8 @@
-from django.db.models import Sum
-from events.models import ProductionEvent, SystemStatus
+from django.db.models import Sum, Q
+from events.models import ProductionEvent, SubmissionAttempt, SystemStatus
 
 
 def get_summary(source_id=None):
-    from events.models import SubmissionAttempt
-
     qs = ProductionEvent.objects.all()
     if source_id:
         qs = qs.filter(source_id=source_id)
@@ -20,21 +18,27 @@ def get_summary(source_id=None):
         if target and target.quantity:
             total_void += target.quantity
 
-    # Rejected submissions count (from SubmissionAttempt, not from ProductionEvent)
-    rejected_qs = SubmissionAttempt.objects.filter(classification='REJECTED')
+    # ACK-aware counters (excluding DUPLICATE, CONFLICT, REJECTED)
+    ack_eligible = qs.exclude(status__in=['DUPLICATE', 'CONFLICT', 'REJECTED'])
+
+    total_ack = ack_eligible.count()
+    acked_count = ack_eligible.filter(acknowledged_at__isnull=False).count()
+    pending_count = ack_eligible.filter(acknowledged_at__isnull=True).count()
+
+    # Audit-log-based counters (from SubmissionAttempt)
+    attempts = SubmissionAttempt.objects.all()
     if source_id:
-        rejected_qs = rejected_qs.filter(source_id=source_id)
+        attempts = attempts.filter(source_id=source_id)
 
     return {
         'net_total': total_count - total_void,
         'processed_events': count_qs.count() + void_qs.count(),
-        'pending_ack': qs.filter(acknowledged_at__isnull=True).exclude(
-            status__in=['DUPLICATE', 'CONFLICT', 'REJECTED']
-        ).count(),
+        'total_ack': total_ack,                                        # ACKED + Pending
+        'acked': acked_count,                                          # যেগুলো ack হয়েছে
+        'pending_ack': pending_count,                                  # যেগুলো pending
         'unresolved': qs.filter(status='PENDING_REFERENCE').count(),
-        'duplicates': qs.filter(status='DUPLICATE').count(),
-        'conflicts': qs.filter(status='CONFLICT').count(),
-        'rejected_submissions': rejected_qs.count(),
+        'conflicts': attempts.filter(classification='CONFLICT').count(),
+        'rejected_submissions': attempts.filter(classification='REJECTED').count(),
     }
 
 
@@ -46,8 +50,6 @@ def get_pending(source_id=None):
     - Successfully processed COUNT/VOID events that are not yet acknowledged
     - Plus PENDING_REFERENCE events (unresolved VOIDs)
     """
-    from django.db.models import Q
-    
     qs = ProductionEvent.objects.filter(
         Q(status='ACCEPTED', acknowledged_at__isnull=True) |
         Q(status='VOIDED', acknowledged_at__isnull=True) |
@@ -55,11 +57,12 @@ def get_pending(source_id=None):
     )
     if source_id:
         qs = qs.filter(source_id=source_id)
-    
+
     return list(qs.values(
         'event_id', 'source_id', 'type', 'target_event_id',
         'event_time', 'status', 'acknowledged_at'
     ))
+
 
 def get_exceptions(source_id=None):
     qs = ProductionEvent.objects.filter(status__in=['REJECTED', 'CONFLICT'])

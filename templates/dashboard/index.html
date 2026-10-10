@@ -14,8 +14,13 @@
         .card .label { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
         .card .value { font-size: 1.8rem; font-weight: bold; color: #f1f5f9; margin-top: 4px; }
         .card.warn { border-left-color: #f59e0b; }
+        .card.warn .value { color: #f59e0b; }
         .card.danger { border-left-color: #ef4444; }
+        .card.danger .value { color: #ef4444; }
         .card.success { border-left-color: #10b981; }
+        .card.success .value { color: #10b981; }
+        .card.info { border-left-color: #38bdf8; }
+        .card.info .value { color: #38bdf8; }
         .card.rejected { border-left-color: #f43f5e; }
         .card.rejected .value { color: #f43f5e; }
         .panel { background: #1e293b; padding: 16px; border-radius: 8px; margin-bottom: 20px; }
@@ -78,7 +83,7 @@
     </div>
 
     <div class="panel">
-        <h2>Submit Event (JSON)</h2>
+        <h2>Submit Event (JSON) <span id="mqtt-live-badge" style="display:none; background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; margin-left: 10px;">📡 LIVE from MQTT</span></h2>
         <textarea id="event-input">{"source_id": "LINE-01", "event_id": "EV-300", "type": "COUNT", "quantity": 5, "event_time": "2026-10-09T10:30:00Z"}</textarea>
         <button class="primary" onclick="submitEvent()">Submit Event</button>
         <pre id="submit-result" style="margin-top: 10px; color: #94a3b8; font-size: 0.8rem;"></pre>
@@ -120,10 +125,11 @@
         function renderSummary(data) {
             const cards = [
                 { label: 'Net Total', value: data.net_total, cls: 'success' },
-                { label: 'Processed', value: data.processed_events, cls: '' },
+                { label: 'Processed', value: data.processed_events, cls: 'info' },
+                { label: 'Total ACK', value: data.total_ack || 0, cls: 'info' },
+                { label: 'Acked', value: data.acked || 0, cls: 'success' },
                 { label: 'Pending Ack', value: data.pending_ack, cls: 'warn' },
                 { label: 'Unresolved', value: data.unresolved, cls: 'warn' },
-                { label: 'Duplicates', value: data.duplicates, cls: '' },
                 { label: 'Conflicts', value: data.conflicts, cls: 'danger' },
                 { label: 'Rejected Subs', value: data.rejected_submissions || 0, cls: 'rejected' },
             ];
@@ -273,11 +279,40 @@
             switchTab(currentTab, document.querySelector(`.tab[data-tab="${currentTab}"]`));
         }
 
+        // ============ MQTT Auto-Fill (polling /api/mqtt-latest) ============
+        let lastFilledChallengeId = null;
+
+        async function loadLatestMqttChallenge() {
+            try {
+                const data = await fetchJSON(`${API}/api/mqtt-latest`);
+                if (!data || !data.challenge_id) return;
+                if (data.challenge_id === lastFilledChallengeId) return;
+
+                lastFilledChallengeId = data.challenge_id;
+
+                const payload = data.payload;
+                if (payload && payload.events && payload.events.length > 0) {
+                    const textarea = document.getElementById('event-input');
+                    textarea.value = JSON.stringify(payload.events[0], null, 2);
+                    showToast(`📥 MQTT challenge loaded: ${data.challenge_id}`);
+                    console.log('Auto-filled from MQTT:', payload.events[0]);
+
+                    // Show "LIVE" badge
+                    const badge = document.getElementById('mqtt-live-badge');
+                    if (badge) badge.style.display = 'inline-block';
+                }
+            } catch (e) {
+                // silently ignore
+            }
+        }
+
         setInterval(loadSummary, 5000);
         setInterval(loadMqttStatus, 3000);
+        setInterval(loadLatestMqttChallenge, 3000);
 
         loadSummary();
         loadMqttStatus();
+        loadLatestMqttChallenge();
         switchTab('events', document.querySelector('.tab'));
     </script>
 </body>

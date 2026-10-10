@@ -50,3 +50,18 @@ class AckView(APIView):
 class MqttStatusView(APIView):
     def get(self, request):
         return Response({"status": get_mqtt_status()})
+
+
+from mqtt_integration.latest_store import get_latest, get_history
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MqttLatestView(APIView):
+    def get(self, request):
+        return Response(get_latest())
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MqttHistoryView(APIView):
+    def get(self, request):
+        return Response({"history": get_history()})
